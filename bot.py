@@ -80,6 +80,76 @@ def is_website_request(text):
     return any(k in low for k in keywords)
 
 
+def is_project_request(text):
+    low = text.lower()
+    keywords = [
+        "java",
+        "gradle",
+        "maven",
+        "apk",
+        "android",
+        "dastur",
+        "app",
+        "loyiha",
+        "program",
+        "python dastur",
+        "kod yoz",
+        "dastur yoz",
+    ]
+    return any(k in low for k in keywords)
+
+
+def is_image_request(text):
+    low = text.lower()
+    keywords = [
+        "rasm",
+        "rasm chiz",
+        "rasm yarat",
+        "surat",
+        "image",
+        "draw",
+        "logo",
+        "icon",
+        "screenshot",
+    ]
+    return any(k in low for k in keywords)
+
+
+def build_project(prompt):
+    sys_prompt = (
+        "Siz professional dasturchisiz. Foydalanuvchi so'roviga mos dastur loyihasi "
+        "fayllarini yarating. "
+        'JAVOB FAQAT JSON formatda bo\'lsin: {"files":{"fayl_nomi.uz":"kod",...}}. '
+        "Fayllar to'liq, ishlaydigan kod bilan bo'lsin. "
+        "Java/Gradle/Maven loyihasi uchun build.gradle, settings.gradle, src/Main.java "
+        "kabi barcha kerakli fayllarni qo'shing. Boshqa hech narsa yozmang."
+    )
+    import json as _json
+
+    raw = ask_gemini(prompt, history=[{"role": "user", "text": sys_prompt}])
+    try:
+        start = raw.index("{")
+        end = raw.rindex("}") + 1
+        data = _json.loads(raw[start:end])
+        files = data.get("files", {})
+        if files:
+            return files
+    except Exception as e:
+        log.error("build_project json error: %s", e)
+    return None
+
+
+def make_zip(files):
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
 def build_website(prompt):
     sys_prompt = (
         "Siz professional web dasturchisiz. Foydalanuvchi so'roviga mos, "
@@ -190,7 +260,7 @@ def main():
                     f"GEMINI_API_KEY: {'bor' if GEMINI_KEY else 'YOQ — sozlanmagan'}"
                 )
             else:
-                if is_website_request(text):
+                if is_website_request(text) and not is_project_request(text):
                     prog = call(
                         "sendMessage",
                         chat_id=chat_id,
@@ -245,6 +315,59 @@ def main():
                             )
                     else:
                         send_msg(chat_id, ask_gemini(text, chat_history.get(chat_id, [])))
+                elif is_project_request(text):
+                    prog = call(
+                        "sendMessage",
+                        chat_id=chat_id,
+                        text="Dastur loyihasi yaratilmoqda...",
+                    )
+                    mid = prog["result"]["message_id"] if prog and prog.get("ok") else None
+                    if mid:
+                        send_typing(chat_id)
+                    files = build_project(text)
+                    if files:
+                        if mid:
+                            show_progress(
+                                chat_id,
+                                mid,
+                                [
+                                    "Loyiha tuzilmoqda... (20%)",
+                                    "Kod yozilmoqda... (60%)",
+                                    "Tekshirilmoqda... (90%)",
+                                ],
+                            )
+                        import io
+
+                        zipped = make_zip(files)
+                        send_document(
+                            chat_id,
+                            "loyiha.zip",
+                            io.BytesIO(zipped),
+                            "Loyiha tayyor! ZIP faylni yuklab oling.",
+                        )
+                        if mid:
+                            call(
+                                "editMessageText",
+                                chat_id=chat_id,
+                                message_id=mid,
+                                text="Loyiha tayyor! Quyida fayl:",
+                            )
+                    else:
+                        if mid:
+                            call(
+                                "editMessageText",
+                                chat_id=chat_id,
+                                message_id=mid,
+                                text="Loyiha yaratishda xatolik. Qayta urinib ko'ring.",
+                            )
+                        else:
+                            send_msg(chat_id, "Loyiha yaratishda xatolik. Qayta urinib ko'ring.")
+                elif is_image_request(text):
+                    send_msg(
+                        chat_id,
+                        "Rasm yaratish uchun hozircha bepul limit yetarli emas. "
+                        "Lekin men matnli javob beraman — nimani chizish kerakligini batafsil yozing.",
+                    )
                 else:
                     send_typing(chat_id)
                     reply = ask_gemini(text, chat_history.get(chat_id, []))
