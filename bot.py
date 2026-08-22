@@ -37,6 +37,64 @@ def send_typing(chat_id):
     call("sendChatAction", chat_id=chat_id, action="typing")
 
 
+def send_document(chat_id, filename, content, caption=""):
+    try:
+        files = {"document": (filename, content, "text/html")}
+        requests.post(
+            f"{API}/sendDocument",
+            data={"chat_id": chat_id, "caption": caption},
+            files=files,
+            timeout=60,
+        )
+    except Exception as e:
+        log.error("sendDocument error: %s", e)
+
+
+def show_progress(chat_id, working_message_id, frames):
+    import time as _time
+
+    for f in frames:
+        call(
+            "editMessageText",
+            chat_id=chat_id,
+            message_id=working_message_id,
+            text=f,
+        )
+        _time.sleep(1.2)
+
+
+def is_website_request(text):
+    low = text.lower()
+    keywords = [
+        "sayt",
+        "website",
+        "web site",
+        "web sayt",
+        "html",
+        "sahifa",
+        "ilova",
+        "app yarat",
+        "sayt yarat",
+        "website yarat",
+    ]
+    return any(k in low for k in keywords)
+
+
+def build_website(prompt):
+    sys_prompt = (
+        "Siz professional web dasturchisiz. Foydalanuvchi so'roviga mos, "
+        "zamonaviy va chiroyli bitta to'liq HTML sahifa yarating. "
+        "Sahifa quyidagilarni o'z ichiga olishi kerak:\n"
+        "- CSS animatsiyalar (hover, fade, slide, pulse)\n"
+        "- Responsive dizayn\n"
+        "- Zamonaviy gradientlar va soyali kartalar\n"
+        "- Professional shriftlar\n"
+        "JAVOB FAQAT HTML KOD bo'lsin (DOCTYPE dan </html> gacha). "
+        "Hech qanday izoh yoki tushuntirish yozmang."
+    )
+    return ask_gemini(prompt, history=[{"role": "user", "text": sys_prompt}])
+
+
 def ask_gemini(prompt, history=None):
     contents = []
     for h in (history or [])[-8:]:
@@ -132,15 +190,71 @@ def main():
                     f"GEMINI_API_KEY: {'bor' if GEMINI_KEY else 'YOQ — sozlanmagan'}"
                 )
             else:
-                send_typing(chat_id)
-                reply = ask_gemini(text, chat_history.get(chat_id, []))
-                chat_history.setdefault(chat_id, []).extend(
-                    [
-                        {"role": "user", "text": text},
-                        {"role": "model", "text": reply},
-                    ]
-                )
-            send_msg(chat_id, reply)
+                if is_website_request(text):
+                    prog = call(
+                        "sendMessage",
+                        chat_id=chat_id,
+                        text="Sayt yaratilmoqda...",
+                    )
+                    if prog and prog.get("ok"):
+                        mid = prog["result"]["message_id"]
+                        send_typing(chat_id)
+                        html_code = build_website(text)
+                        show_progress(
+                            chat_id,
+                            mid,
+                            [
+                                "Sayt tayyorlanmoqda... (0%)",
+                                "Dizayn yaratilmoqda... (40%)",
+                                "Animatsiyalar qo'shilmoqda... (70%)",
+                                "Tezkorlik tekshirilmoqda... (90%)",
+                            ],
+                        )
+                        if html_code.startswith("AI xato") or html_code.startswith("Afrik"):
+                            call(
+                                "editMessageText",
+                                chat_id=chat_id,
+                                message_id=mid,
+                                text=f"Sayt yaratishda xatolik: {html_code}",
+                            )
+                        else:
+                            import io
+
+                            name = "sayt.html"
+                            if "```" in html_code:
+                                html_code = html_code.split("```")[1]
+                                if html_code.startswith("html"):
+                                    html_code = html_code[4:]
+                            try:
+                                start = html_code.index("<html")
+                                end = html_code.rindex("</html>") + len("</html>")
+                                html_code = html_code[start:end]
+                            except ValueError:
+                                pass
+                            send_document(
+                                chat_id,
+                                name,
+                                io.BytesIO(html_code.encode("utf-8")),
+                                "Sizning saytingiz tayyor! Faylni yuklab oling va brauzerda oching.",
+                            )
+                            call(
+                                "editMessageText",
+                                chat_id=chat_id,
+                                message_id=mid,
+                                text="Sayt tayyor! Quyida fayl:",
+                            )
+                    else:
+                        send_msg(chat_id, ask_gemini(text, chat_history.get(chat_id, [])))
+                else:
+                    send_typing(chat_id)
+                    reply = ask_gemini(text, chat_history.get(chat_id, []))
+                    chat_history.setdefault(chat_id, []).extend(
+                        [
+                            {"role": "user", "text": text},
+                            {"role": "model", "text": reply},
+                        ]
+                    )
+                    send_msg(chat_id, reply)
 
 
 if __name__ == "__main__":
