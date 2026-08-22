@@ -7,7 +7,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
 
 TOKEN = os.environ.get("BOT_TOKEN", "")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 API = f"https://api.telegram.org/bot{TOKEN}"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("bot")
@@ -28,6 +31,31 @@ def get_updates(offset):
 
 def send_msg(chat_id, text):
     call("sendMessage", chat_id=chat_id, text=text)
+
+
+def send_typing(chat_id):
+    call("sendChatAction", chat_id=chat_id, action="typing")
+
+
+def ask_gemini(prompt, history=None):
+    contents = []
+    for h in (history or [])[-8:]:
+        contents.append({"role": h["role"], "parts": [{"text": h["text"]}]})
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
+    try:
+        r = requests.post(
+            f"{GEMINI_URL}?key={GEMINI_KEY}",
+            json={"contents": contents},
+            timeout=60,
+        )
+        data = r.json()
+        if "candidates" in data and data["candidates"]:
+            parts = data["candidates"][0]["content"]["parts"]
+            return "".join(p.get("text", "") for p in parts).strip()
+        return "Afrik kechirasiz, javob olishda xatolik yuz berdi."
+    except Exception as e:
+        log.error("Gemini error: %s", e)
+        return "AI bilan bog'lanishda xatolik yuz berdi."
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -53,6 +81,7 @@ def main():
     threading.Thread(target=start_health_server, daemon=True).start()
     log.info("Bot started")
     offset = 0
+    chat_history = {}
     while True:
         data = get_updates(offset)
         if not data or not data.get("ok"):
@@ -74,18 +103,33 @@ def main():
                     "Buyruqlar:\n"
                     "/help — yordam\n"
                     "/info — bot haqida\n"
-                    "Boshqa xabarlar — takrorlanadi (echo)"
+                    "/clear — suhbat tarixini tozalash\n"
+                    "Boshqa xabarlar — AI (Gemini) javob beradi"
                 )
             elif text.startswith("/help"):
                 reply = (
                     "/start — boshlash\n"
                     "/info — bot haqida ma'lumot\n"
-                    "O'zingiz yozgan har qanday matn takrorlanadi."
+                    "/clear — suhbat tarixini tozalash\n"
+                    "Har qanday matn yozing — AI javob beradi."
                 )
+            elif text.startswith("/clear"):
+                chat_history[chat_id] = []
+                reply = "Suhbat tarixi tozalandi. Yangi savol bering!"
             elif text.startswith("/info"):
-                reply = "SirojAIorg_bot — python'da yozilgan oddiy Telegram bot."
+                reply = (
+                    "SirojAIorg_bot — Gemini AI bilan ishlaydigan Telegram bot.\n"
+                    f"Model: {GEMINI_MODEL}"
+                )
             else:
-                reply = f"{name}, siz yozdingiz: {text}"
+                send_typing(chat_id)
+                reply = ask_gemini(text, chat_history.get(chat_id, []))
+                chat_history.setdefault(chat_id, []).extend(
+                    [
+                        {"role": "user", "text": text},
+                        {"role": "model", "text": reply},
+                    ]
+                )
             send_msg(chat_id, reply)
 
 
