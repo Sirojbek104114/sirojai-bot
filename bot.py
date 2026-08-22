@@ -53,7 +53,9 @@ def ask_gemini(prompt, history=None):
             parts = data["candidates"][0]["content"]["parts"]
             return "".join(p.get("text", "") for p in parts).strip()
         log.error("Gemini no candidates. status=%s body=%s", r.status_code, str(data)[:300])
-        return "Afrik kechirasiz, javob olishda xatolik yuz berdi."
+        err = data.get("error", {})
+        detail = err.get("message", str(data)[:200]) if isinstance(err, dict) else str(data)[:200]
+        return f"AI xato (status {r.status_code}): {detail}"
     except Exception as e:
         log.error("Gemini error: %s", e)
         return "AI bilan bog'lanishda xatolik yuz berdi."
