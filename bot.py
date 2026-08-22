@@ -52,6 +52,7 @@ def ask_gemini(prompt, history=None):
         if "candidates" in data and data["candidates"]:
             parts = data["candidates"][0]["content"]["parts"]
             return "".join(p.get("text", "") for p in parts).strip()
+        log.error("Gemini no candidates. status=%s body=%s", r.status_code, str(data)[:300])
         return "Afrik kechirasiz, javob olishda xatolik yuz berdi."
     except Exception as e:
         log.error("Gemini error: %s", e)
@@ -110,6 +111,7 @@ def main():
                 reply = (
                     "/start — boshlash\n"
                     "/info — bot haqida ma'lumot\n"
+                    "/status — bot holati\n"
                     "/clear — suhbat tarixini tozalash\n"
                     "Har qanday matn yozing — AI javob beradi."
                 )
@@ -120,6 +122,12 @@ def main():
                 reply = (
                     "SirojAIorg_bot — Gemini AI bilan ishlaydigan Telegram bot.\n"
                     f"Model: {GEMINI_MODEL}"
+                )
+            elif text.startswith("/status"):
+                reply = (
+                    f"Bot: ishlayapti\n"
+                    f"Model: {GEMINI_MODEL}\n"
+                    f"GEMINI_API_KEY: {'bor' if GEMINI_KEY else 'YOQ — sozlanmagan'}"
                 )
             else:
                 send_typing(chat_id)
